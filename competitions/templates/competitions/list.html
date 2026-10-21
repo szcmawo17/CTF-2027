@@ -1,0 +1,28 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>CTF Platform</title>
+</head>
+
+<body>
+
+<h1>Соревнования</h1>
+
+{% for competition in competitions %}
+
+    <h2>{{ competition.name }}</h2>
+
+    <p>{{ competition.description }}</p>
+
+    <h3>Команды:</h3>
+
+    <ul>
+        {% for team in competition.teams.all %}
+            <li>{{ team.name }}</li>
+        {% endfor %}
+    </ul>
+
+{% endfor %}
+
+</body>
+</html>
