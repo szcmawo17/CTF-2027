@@ -1,7 +1,9 @@
 from .models import TeamService
-from .infrastructure import deploy_team_service
-
-
+from .infrastructure import (
+    deploy_team_service,
+    stop_team_service,
+    sync_team_service_status,
+)
 def create_team_services(competition):
     """
     Создаёт записи сервисов для каждой команды.
@@ -17,9 +19,7 @@ def create_team_services(competition):
 
 
 def deploy_competition_services(competition):
-    """
-    Разворачивает инфраструктуру соревнования.
-    """
+    """Разворачивает сервисы с попыткой отката при ошибке."""
 
     if not competition.teams.exists():
         raise ValueError("У соревнования нет команд.")
@@ -27,18 +27,50 @@ def deploy_competition_services(competition):
     if not competition.services.exists():
         raise ValueError("У соревнования нет сервисов.")
 
-    # Создаём недостающие записи
     create_team_services(competition)
 
-    # Получаем сервисы всех команд соревнования
-    team_services = TeamService.objects.filter(
+    team_services = list(TeamService.objects.filter(
         team__competition=competition,
         service__in=competition.services.all()
-    )
+    ))
 
-    for team_service in team_services:
-        deploy_team_service(team_service)
+    # До запуска запоминаем реальное состояние всех сервисов.
+    initial_statuses = {
+        service.pk: sync_team_service_status(service)
+        for service in team_services
+    }
 
+    attempted = []
+
+    try:
+        for service in team_services:
+            attempted.append(service)
+            deploy_team_service(service)
+
+    except Exception as error:
+        rollback_errors = []
+
+        for service in reversed(attempted):
+            # Не трогаем контейнеры, работавшие до операции.
+            if initial_statuses[service.pk] == "running":
+                continue
+
+            if service.container_id:
+                try:
+                    stop_team_service(service)
+                except Exception as rollback_error:
+                    rollback_errors.append(
+                        f"{service.pk}: {rollback_error}"
+                    )
+
+        if rollback_errors:
+            raise RuntimeError(
+                "Развёртывание завершилось ошибкой. "
+                "Откат выполнен не полностью: "
+                + "; ".join(rollback_errors)
+            ) from error
+
+        raise
 
 def start_competition(competition):
     """
