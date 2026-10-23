@@ -1,0 +1,9 @@
+<h1>Регистрация участника</h1>
+
+<form method="post">
+    {% csrf_token %}
+    {{ form.as_p }}
+    <button type="submit">Зарегистрироваться</button>
+</form>
+
+<a href="{% url 'login' %}">Уже есть аккаунт? Войти</a>

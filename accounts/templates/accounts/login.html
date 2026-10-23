@@ -1,0 +1,9 @@
+<h1>Вход в CTF Platform</h1>
+
+<form method="post">
+    {% csrf_token %}
+    {{ form.as_p }}
+    <button type="submit">Войти</button>
+</form>
+
+<a href="{% url 'signup' %}">Создать аккаунт</a>

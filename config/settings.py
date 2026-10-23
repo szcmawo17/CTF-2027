@@ -40,7 +40,8 @@ INSTALLED_APPS = [
     'django.contrib.messages',
     'django.contrib.staticfiles',
 
-    'competitions'	
+    'competitions',
+    'accounts'	
 ]
 
 MIDDLEWARE = [
@@ -129,3 +130,6 @@ MAILERS = {
         'BACKEND': 'django.core.mail.backends.console.EmailBackend',
     },
 }
+
+LOGIN_REDIRECT_URL = "/competitions/"
+LOGOUT_REDIRECT_URL = "/accounts/login/"
