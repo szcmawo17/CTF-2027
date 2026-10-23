@@ -6,6 +6,23 @@ from .models import TeamService
 def get_docker_client():
     return docker.from_env()
 
+def validate_container_ports(container):
+    """Проверяет, что сервис опубликован только на localhost."""
+    container.reload()
+
+    bindings = (
+        container.attrs["HostConfig"]["PortBindings"] or {}
+    ).get("5000/tcp") or []
+
+    if not bindings or any(
+        binding.get("HostIp") != "127.0.0.1"
+        for binding in bindings
+    ):
+        raise RuntimeError(
+            "Контейнер использует небезопасную публикацию порта. "
+            "Необходимо пересоздать контейнер."
+        )
+
 
 def deploy_team_service(team_service):
     client = get_docker_client()
@@ -16,6 +33,7 @@ def deploy_team_service(team_service):
             container = client.containers.get(
                 team_service.container_id
             )
+            validate_container_ports(container)
 
             if container.status == "running":
                 print("Контейнер уже работает:", container.id)
@@ -42,7 +60,7 @@ def deploy_team_service(team_service):
     container = client.containers.run(
         "ctf-test-service",
         detach=True,
-        ports={"5000/tcp": None},
+        ports={"5000/tcp": ("127.0.0.1", None)},
         labels={
             "ctf.team_service_id": str(team_service.id)
         }
@@ -110,6 +128,7 @@ def restart_team_service(team_service):
     container = client.containers.get(
         team_service.container_id
     )
+    validate_container_ports(container)
 
     if container.status != "running":
         container.start()
@@ -120,3 +139,30 @@ def restart_team_service(team_service):
     team_service.save(update_fields=["status"])
 
     return container
+
+def sync_team_service_status(team_service):
+    """Синхронизирует статус сервиса с реальным состоянием Docker."""
+    if not team_service.container_id:
+        new_status = "created"
+    else:
+        client = get_docker_client()
+
+        try:
+            container = client.containers.get(
+                team_service.container_id
+            )
+            container.reload()
+
+            if container.status == "exited":
+                new_status = "stopped"
+            else:
+                new_status = container.status
+
+        except docker.errors.NotFound:
+            new_status = "missing"
+
+    if team_service.status != new_status:
+        team_service.status = new_status
+        team_service.save(update_fields=["status"])
+
+    return new_status
