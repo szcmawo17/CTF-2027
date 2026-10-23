@@ -1,5 +1,7 @@
 from unittest.mock import Mock, patch
-from django.test import SimpleTestCase
+from django.test import SimpleTestCase, TestCase
+from django.db import IntegrityError, transaction
+from .models import Competition, Team, Service, TeamService
 import docker
 
 from .infrastructure import (
@@ -7,6 +9,7 @@ from .infrastructure import (
     restart_team_service,
     sync_team_service_status,
 )
+from .services import deploy_competition_services
 
 
 class DockerPortSafetyTests(SimpleTestCase):
@@ -81,3 +84,83 @@ class DockerPortSafetyTests(SimpleTestCase):
         service.save.assert_called_once_with(
             update_fields=["status"]
         )
+
+class CompetitionDeploymentTests(SimpleTestCase):
+
+    @patch("competitions.services.stop_team_service")
+    @patch("competitions.services.deploy_team_service")
+    @patch("competitions.services.sync_team_service_status")
+    @patch("competitions.services.create_team_services")
+    @patch("competitions.services.TeamService.objects.filter")
+    def test_rollback_after_deployment_failure(
+        self, mock_filter, mock_create, mock_sync,
+        mock_deploy, mock_stop
+    ):
+        services = [
+            Mock(pk=1, container_id="container-1"),
+            Mock(pk=2, container_id="container-2"),
+            Mock(pk=3, container_id=""),
+        ]
+
+        competition = Mock()
+        competition.teams.exists.return_value = True
+        competition.services.exists.return_value = True
+
+        mock_filter.return_value = services
+        mock_sync.side_effect = ["running", "stopped", "created"]
+
+        mock_deploy.side_effect = [
+            None,
+            None,
+            RuntimeError("Docker failed"),
+        ]
+
+        with self.assertRaisesRegex(RuntimeError, "Docker failed"):
+            deploy_competition_services(competition)
+
+        # Откатываем только второй контейнер.
+        mock_stop.assert_called_once_with(services[1])
+
+        # Первый контейнер работал до операции.
+        self.assertNotEqual(
+            mock_stop.call_args.args[0],
+            services[0]
+        )
+
+class TeamServiceModelTests(TestCase):
+
+    def setUp(self):
+        self.competition = Competition.objects.create(
+            name="Test CTF",
+            description="Test competition"
+        )
+        self.team = Team.objects.create(
+            name="Red Team",
+            competition=self.competition
+        )
+        self.service = Service.objects.create(
+            name="VulnerableService",
+            description="Test service"
+        )
+
+    def test_team_service_creation(self):
+        team_service = TeamService.objects.create(
+            team=self.team,
+            service=self.service
+        )
+
+        self.assertEqual(team_service.status, "created")
+        self.assertEqual(team_service.container_id, "")
+
+    def test_duplicate_team_service_forbidden(self):
+        TeamService.objects.create(
+            team=self.team,
+            service=self.service
+        )
+
+        with self.assertRaises(IntegrityError):
+            with transaction.atomic():
+                TeamService.objects.create(
+                    team=self.team,
+                    service=self.service
+                )

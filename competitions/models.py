@@ -15,10 +15,6 @@ class Competition(models.Model):
         choices=STATUS_CHOICES,
         default="draft"
     )
-
-    
-    name = models.CharField(max_length=200)
-    description = models.TextField()
     
     services = models.ManyToManyField(
     "Service",
@@ -75,7 +71,13 @@ class TeamService(models.Model):
         max_length=20,
         default="created"
     )
-
+    class Meta:
+        constraints = [
+            models.UniqueConstraint(
+                fields=["team", "service"],
+                name="unique_team_service"
+            )
+        ]
     def __str__(self):
         return f"{self.team} - {self.service}"    
 
