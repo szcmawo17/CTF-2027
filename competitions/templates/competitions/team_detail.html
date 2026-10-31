@@ -1,0 +1,56 @@
+{% extends "base.html" %}
+
+{% block title %}{{ team.name }} — CTF Platform{% endblock %}
+
+{% block content %}
+<h1>{{ team.name }}</h1>
+<p>Ваша роль: {{ membership.get_role_display }}</p>
+
+<h2>Участники</h2>
+<ul>
+    {% for member in memberships %}
+        <li>
+            {{ member.user.username }} — {{ member.get_role_display }}
+            {% if is_captain and member.role == "member" %}
+                <form method="post" action="{% url 'team_transfer_captain' team.id member.id %}">
+                    {% csrf_token %}
+                    <button type="submit">Назначить капитаном</button>
+                </form>
+                <form method="post" action="{% url 'team_remove_member' team.id member.id %}">
+                    {% csrf_token %}
+                    <button type="submit">Исключить</button>
+                </form>
+            {% endif %}
+        </li>
+    {% endfor %}
+</ul>
+
+{% if is_captain %}
+    <h2>Пригласить пользователя</h2>
+    <form method="post" action="{% url 'team_invite' team.id %}">
+        {% csrf_token %}
+        {{ invitation_form.as_p }}
+        <button type="submit">Пригласить</button>
+    </form>
+
+    <h2>Ожидающие приглашения</h2>
+    <ul>
+        {% for invitation in pending_invitations %}
+            <li>
+                {{ invitation.invitee.username }}
+                <form method="post" action="{% url 'team_invitation_cancel' invitation.id %}">
+                    {% csrf_token %}
+                    <button type="submit">Отозвать</button>
+                </form>
+            </li>
+        {% empty %}
+            <li>Ожидающих приглашений нет.</li>
+        {% endfor %}
+    </ul>
+{% else %}
+    <form method="post" action="{% url 'team_leave' team.id %}">
+        {% csrf_token %}
+        <button type="submit">Выйти из команды</button>
+    </form>
+{% endif %}
+{% endblock %}

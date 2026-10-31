@@ -1,6 +1,9 @@
 from django.contrib import admin, messages
 
-from .models import Competition, Team, Service, TeamService
+from .models import (
+    Competition, CompetitionParticipation, Team, TeamInvitation,
+    TeamMembership, Service, TeamService
+)
 from .services import (
     start_competition,
     deploy_competition_services )
@@ -68,6 +71,35 @@ class CompetitionAdmin(admin.ModelAdmin):
 
 admin.site.register(Team)
 admin.site.register(Service)
+
+
+@admin.register(TeamMembership)
+class TeamMembershipAdmin(admin.ModelAdmin):
+    list_display = ("team", "user", "role")
+    list_filter = ("role",)
+
+
+@admin.register(TeamInvitation)
+class TeamInvitationAdmin(admin.ModelAdmin):
+    list_display = ("team", "invitee", "invited_by", "status", "created_at")
+    list_filter = ("status",)
+
+    def has_add_permission(self, request):
+        return False
+
+    def has_change_permission(self, request, obj=None):
+        return False
+
+    def has_delete_permission(self, request, obj=None):
+        return False
+
+
+@admin.register(CompetitionParticipation)
+class CompetitionParticipationAdmin(admin.ModelAdmin):
+    list_display = ("team", "competition")
+    list_filter = ("competition",)
+
+
 @admin.action(description="Остановить выбранные сервисы")
 def stop_services(modeladmin, request, queryset):
 
@@ -108,7 +140,7 @@ def restart_services(modeladmin, request, queryset):
 class TeamServiceAdmin(admin.ModelAdmin):
 
     list_display = (
-        "team",
+        "participation",
         "service",
         "status",
         "host_port",

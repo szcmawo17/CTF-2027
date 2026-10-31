@@ -87,7 +87,7 @@ def deploy_team_service(team_service):
 
     print(
         f"Развёрнут сервис {team_service.service} "
-        f"для команды {team_service.team}: порт {port}"
+        f"для команды {team_service.participation.team}: порт {port}"
     )
 
     return container

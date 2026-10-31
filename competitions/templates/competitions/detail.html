@@ -1,0 +1,42 @@
+{% extends "base.html" %}
+
+{% block title %}{{ competition.name }} — CTF Platform{% endblock %}
+
+{% block content %}
+<h1>{{ competition.name }}</h1>
+<p>{{ competition.description }}</p>
+<p>Состояние: {{ competition.get_status_display }}</p>
+
+<h2>Команды</h2>
+<ul>
+    {% for row in participation_rows %}
+        <li>
+            {{ row.participation.team.name }}
+            {% if row.can_withdraw %}
+                <form method="post" action="{% url 'competition_withdraw_team' competition.id row.participation.team.id %}">
+                    {% csrf_token %}
+                    <button type="submit">Снять команду</button>
+                </form>
+            {% endif %}
+        </li>
+    {% empty %}
+        <li>Команд пока нет.</li>
+    {% endfor %}
+</ul>
+
+{% if registration_open %}
+    <h2>Регистрация команды</h2>
+    {% if user.is_authenticated %}
+        {% for team in available_teams %}
+            <form method="post" action="{% url 'competition_register_team' competition.id team.id %}">
+                {% csrf_token %}
+                <button type="submit">Зарегистрировать {{ team.name }}</button>
+            </form>
+        {% empty %}
+            <p>У вас нет команды под вашим капитанством, доступной для регистрации.</p>
+        {% endfor %}
+    {% else %}
+        <p><a href="{% url 'login' %}?next={{ request.path|urlencode }}">Войдите</a>, чтобы зарегистрировать команду.</p>
+    {% endif %}
+{% endif %}
+{% endblock %}

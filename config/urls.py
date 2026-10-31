@@ -16,10 +16,12 @@ Including another URLconf
 """
 from django.contrib import admin
 from django.urls import path, include
-from competitions.views import competition_list
+from django.views.generic import RedirectView
 
 urlpatterns = [
+    path('', RedirectView.as_view(pattern_name='competition_list', permanent=False)),
     path('admin/', admin.site.urls),
-    path('competitions/', competition_list),
+    path('competitions/', include('competitions.urls')),
+    path('teams/', include('competitions.team_urls')),
     path('accounts/', include('accounts.urls')),
 ]

@@ -1,3 +1,8 @@
+{% extends "base.html" %}
+
+{% block title %}Регистрация — CTF Platform{% endblock %}
+
+{% block content %}
 <h1>Регистрация участника</h1>
 
 <form method="post">
@@ -6,4 +11,5 @@
     <button type="submit">Зарегистрироваться</button>
 </form>
 
-<a href="{% url 'login' %}">Уже есть аккаунт? Войти</a>
+<p><a href="{% url 'login' %}">Уже есть аккаунт? Войти</a></p>
+{% endblock %}

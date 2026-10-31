@@ -59,7 +59,7 @@ ROOT_URLCONF = 'config.urls'
 TEMPLATES = [
     {
         'BACKEND': 'django.template.backends.django.DjangoTemplates',
-        'DIRS': [],
+        'DIRS': [BASE_DIR / 'templates'],
         'APP_DIRS': True,
         'OPTIONS': {
             'context_processors': [
@@ -131,5 +131,6 @@ MAILERS = {
     },
 }
 
-LOGIN_REDIRECT_URL = "/competitions/"
-LOGOUT_REDIRECT_URL = "/accounts/login/"
+LOGIN_URL = "login"
+LOGIN_REDIRECT_URL = "profile"
+LOGOUT_REDIRECT_URL = "login"

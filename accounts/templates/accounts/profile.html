@@ -1,0 +1,49 @@
+{% extends "base.html" %}
+
+{% block title %}Личный кабинет — CTF Platform{% endblock %}
+
+{% block content %}
+<h1>Личный кабинет</h1>
+<p>Имя пользователя: {{ user.username }}</p>
+
+<h2>Контактные данные</h2>
+<form method="post">
+    {% csrf_token %}
+    {{ form.as_p }}
+    <button type="submit">Сохранить</button>
+</form>
+<p>Контактный email пока не подтверждается и не используется для входа.</p>
+<p><a href="{% url 'password_change' %}">Изменить пароль</a></p>
+
+<h2 id="teams">Мои команды</h2>
+<p><a href="{% url 'team_create' %}">Создать команду</a></p>
+<ul>
+    {% for membership in team_memberships %}
+        <li>
+            <a href="{% url 'team_detail' membership.team.id %}">{{ membership.team.name }}</a>
+            — {{ membership.get_role_display }}
+        </li>
+    {% empty %}
+        <li>Вы пока не состоите в команде.</li>
+    {% endfor %}
+</ul>
+
+<h2>Приглашения</h2>
+<ul>
+    {% for invitation in pending_invitations %}
+        <li>
+            {{ invitation.team.name }}
+            <form method="post" action="{% url 'team_invitation_accept' invitation.id %}">
+                {% csrf_token %}
+                <button type="submit">Принять</button>
+            </form>
+            <form method="post" action="{% url 'team_invitation_decline' invitation.id %}">
+                {% csrf_token %}
+                <button type="submit">Отклонить</button>
+            </form>
+        </li>
+    {% empty %}
+        <li>Новых приглашений нет.</li>
+    {% endfor %}
+</ul>
+{% endblock %}

@@ -1,28 +1,25 @@
-<!DOCTYPE html>
-<html>
-<head>
-    <title>CTF Platform</title>
-</head>
+{% extends "base.html" %}
 
-<body>
+{% block title %}Соревнования — CTF Platform{% endblock %}
 
+{% block content %}
 <h1>Соревнования</h1>
 
 {% for competition in competitions %}
 
-    <h2>{{ competition.name }}</h2>
+    <h2><a href="{% url 'competition_detail' competition.id %}">{{ competition.name }}</a></h2>
+    <p>{{ competition.get_status_display }}</p>
 
     <p>{{ competition.description }}</p>
 
     <h3>Команды:</h3>
 
     <ul>
-        {% for team in competition.teams.all %}
-            <li>{{ team.name }}</li>
+        {% for participation in competition.participations.all %}
+            <li>{{ participation.team.name }}</li>
         {% endfor %}
     </ul>
-
+{% empty %}
+    <p>Пока нет доступных соревнований.</p>
 {% endfor %}
-
-</body>
-</html>
+{% endblock %}

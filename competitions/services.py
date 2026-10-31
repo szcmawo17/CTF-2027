@@ -9,11 +9,11 @@ def create_team_services(competition):
     Создаёт записи сервисов для каждой команды.
     """
 
-    for team in competition.teams.all():
+    for participation in competition.participations.all():
         for service in competition.services.all():
 
             TeamService.objects.get_or_create(
-                team=team,
+                participation=participation,
                 service=service
             )
 
@@ -21,7 +21,7 @@ def create_team_services(competition):
 def deploy_competition_services(competition):
     """Разворачивает сервисы с попыткой отката при ошибке."""
 
-    if not competition.teams.exists():
+    if not competition.participations.exists():
         raise ValueError("У соревнования нет команд.")
 
     if not competition.services.exists():
@@ -30,7 +30,7 @@ def deploy_competition_services(competition):
     create_team_services(competition)
 
     team_services = list(TeamService.objects.filter(
-        team__competition=competition,
+        participation__competition=competition,
         service__in=competition.services.all()
     ))
 
@@ -77,7 +77,7 @@ def start_competition(competition):
     Запускает соревнование вместе с инфраструктурой.
     """
 
-    if competition.status != "draft":
+    if competition.status not in ("draft", "registration"):
         raise ValueError(
             "Соревнование уже запущено или завершено."
         )
