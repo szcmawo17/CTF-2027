@@ -7,11 +7,17 @@
 <p>{{ competition.description }}</p>
 <p>Состояние: {{ competition.get_status_display }}</p>
 
+{% if registration_error %}<p role="alert">{{ registration_error }}</p>{% endif %}
+{% if not registration_open %}<p>Регистрация закрыта.</p>{% endif %}
+{% if competition.launch_state == "deploying" %}<p>Выполняется запуск. Состав команд зафиксирован.</p>{% endif %}
+{% if competition.launch_state == "failed" %}<p>Запуск не завершён. Организатору необходимо устранить ошибку; регистрация остаётся закрытой.</p>{% endif %}
+{% if not competition.roster_verified %}<p>Историческая точность состава старого соревнования не подтверждена; показаны данные на момент миграции.</p>{% endif %}
 <h2>Команды</h2>
 <ul>
     {% for row in participation_rows %}
         <li>
             {{ row.participation.team.name }}
+            <ul>{% for player in row.participation.players.all %}<li>{{ player.user.username }} — {{ player.get_role_display }}</li>{% empty %}<li>Состав пока не заполнен.</li>{% endfor %}</ul>
             {% if row.can_withdraw %}
                 <form method="post" action="{% url 'competition_withdraw_team' competition.id row.participation.team.id %}">
                     {% csrf_token %}

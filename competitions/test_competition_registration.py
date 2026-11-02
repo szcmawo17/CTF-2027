@@ -2,7 +2,6 @@ from unittest.mock import patch
 
 from django.contrib.auth import get_user_model
 from django.contrib.auth.models import Permission
-from django.db.models.deletion import ProtectedError
 from django.test import Client, TestCase
 from django.urls import reverse
 
@@ -121,7 +120,7 @@ class CompetitionRegistrationTests(TestCase):
             )
             self.assertEqual(
                 self.client.post(self.register_url(competition=competition)).status_code,
-                400,
+                404 if status == "draft" else 400,
             )
         self.assertFalse(CompetitionParticipation.objects.exists())
 
@@ -132,7 +131,8 @@ class CompetitionRegistrationTests(TestCase):
             self.client.post(self.withdraw_url()),
             reverse("competition_detail", args=[self.competition.pk]),
         )
-        self.assertFalse(CompetitionParticipation.objects.exists())
+        self.assertFalse(CompetitionParticipation.objects.filter(is_active=True).exists())
+        self.assertEqual(CompetitionParticipation.objects.count(), 1)
         self.assertEqual(self.client.post(self.withdraw_url()).status_code, 400)
 
     def test_withdraw_protects_existing_team_services(self):
@@ -159,13 +159,13 @@ class CompetitionRegistrationTests(TestCase):
         self.assertTrue(CompetitionParticipation.objects.filter(pk=participation.pk).exists())
 
     @patch("competitions.models.CompetitionParticipation.delete")
-    def test_withdraw_handles_service_created_after_initial_check(self, mock_delete):
+    def test_withdraw_preserves_participation_row(self, mock_delete):
         CompetitionParticipation.objects.create(
             competition=self.competition, team=self.team
         )
-        mock_delete.side_effect = ProtectedError("Service appeared", set())
         self.client.force_login(self.captain)
-        self.assertEqual(self.client.post(self.withdraw_url()).status_code, 400)
+        self.assertEqual(self.client.post(self.withdraw_url()).status_code, 302)
+        mock_delete.assert_not_called()
         self.assertEqual(CompetitionParticipation.objects.count(), 1)
 
     def test_closing_registration_blocks_withdrawal(self):
@@ -212,7 +212,11 @@ class CompetitionRegistrationTests(TestCase):
 
     @patch("competitions.services.deploy_competition_services")
     def test_admin_can_start_after_registration(self, mock_deploy):
-        start_competition(self.competition)
+        organizer = get_user_model().objects.create_superuser(username="starter", password="unused")
+        self.competition.services.add(Service.objects.create(name="Web", description=""))
+        from .participation_services import register_team
+        register_team(self.competition, self.team, self.captain)
+        start_competition(self.competition, organizer)
         self.competition.refresh_from_db()
         self.assertEqual(self.competition.status, "running")
         mock_deploy.assert_called_once_with(self.competition)

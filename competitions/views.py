@@ -1,16 +1,17 @@
 from django.contrib import messages
 from django.contrib.auth.decorators import login_required
 from django.core.exceptions import ValidationError
-from django.http import Http404, HttpResponseBadRequest
+from django.http import Http404
+from django.db.models import Prefetch
 from django.shortcuts import get_object_or_404, redirect, render
 from django.views.decorators.http import require_POST
 
-from .models import Competition, Team
+from .models import Competition, CompetitionParticipation, Team
 from .participation_services import register_team, withdraw_team
 
 
 def competition_list(request):
-    competitions = Competition.objects.prefetch_related("participations__team")
+    competitions = Competition.objects.prefetch_related(Prefetch("participations", queryset=CompetitionParticipation.objects.filter(is_active=True).select_related("team")))
     if not request.user.has_perm("competitions.view_competition"):
         competitions = competitions.exclude(status="draft")
 
@@ -22,7 +23,7 @@ def competition_list(request):
     )
 
 
-def competition_detail(request, competition_id):
+def competition_detail(request, competition_id, error=None, response_status=200):
     competition = get_object_or_404(Competition, pk=competition_id)
     if competition.status == "draft" and not request.user.has_perm(
         "competitions.view_competition"
@@ -30,7 +31,7 @@ def competition_detail(request, competition_id):
         raise Http404("Соревнование недоступно.")
 
     participations = list(
-        competition.participations.select_related("team").prefetch_related("services")
+        competition.participations.filter(is_active=True).select_related("team").prefetch_related("services", "players__user")
     )
     captain_teams = (
         [
@@ -44,13 +45,14 @@ def competition_detail(request, competition_id):
     )
     captain_team_ids = {team.pk for team in captain_teams}
     registered_team_ids = {participation.team_id for participation in participations}
-    registration_open = competition.status == "registration"
+    registration_open = competition.registration_open
 
     return render(
         request,
         "competitions/detail.html",
         {
             "competition": competition,
+            "registration_error": error,
             "registration_open": registration_open,
             "available_teams": [
                 team for team in captain_teams if team.pk not in registered_team_ids
@@ -67,6 +69,7 @@ def competition_detail(request, competition_id):
                 for participation in participations
             ],
         },
+        status=response_status,
     )
 
 
@@ -78,7 +81,7 @@ def competition_register_team(request, competition_id, team_id):
     try:
         register_team(competition, team, request.user)
     except ValidationError as error:
-        return HttpResponseBadRequest(" ".join(error.messages))
+        return competition_detail(request, competition_id, error=" ".join(error.messages), response_status=400)
     messages.success(request, "Команда зарегистрирована на соревнование.")
     return redirect("competition_detail", competition_id=competition.pk)
 
@@ -91,6 +94,6 @@ def competition_withdraw_team(request, competition_id, team_id):
     try:
         withdraw_team(competition, team, request.user)
     except ValidationError as error:
-        return HttpResponseBadRequest(" ".join(error.messages))
+        return competition_detail(request, competition_id, error=" ".join(error.messages), response_status=400)
     messages.success(request, "Команда снята с соревнования.")
     return redirect("competition_detail", competition_id=competition.pk)

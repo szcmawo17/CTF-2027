@@ -6,12 +6,13 @@
 <h1>{{ team.name }}</h1>
 <p>Ваша роль: {{ membership.get_role_display }}</p>
 
+{% if roster_locked %}<p>Состав и капитан зафиксированы до завершения соревнования.</p>{% endif %}
 <h2>Участники</h2>
 <ul>
     {% for member in memberships %}
         <li>
             {{ member.user.username }} — {{ member.get_role_display }}
-            {% if is_captain and member.role == "member" %}
+            {% if is_captain and not roster_locked and member.role == "member" %}
                 <form method="post" action="{% url 'team_transfer_captain' team.id member.id %}">
                     {% csrf_token %}
                     <button type="submit">Назначить капитаном</button>
@@ -47,7 +48,7 @@
             <li>Ожидающих приглашений нет.</li>
         {% endfor %}
     </ul>
-{% else %}
+{% elif not roster_locked %}
     <form method="post" action="{% url 'team_leave' team.id %}">
         {% csrf_token %}
         <button type="submit">Выйти из команды</button>

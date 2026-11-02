@@ -1,6 +1,9 @@
 from django.contrib.auth import get_user_model
 from django.core.exceptions import PermissionDenied, ValidationError
-from django.db import IntegrityError, transaction
+from django.db import IntegrityError
+
+from .mutation import serialized_mutation
+from .roster_services import require_mutable_team, sync_team_rosters
 
 from .models import Team, TeamInvitation, TeamMembership
 
@@ -12,7 +15,7 @@ def require_captain(team, actor):
         raise PermissionDenied("Только капитан может управлять командой.")
 
 
-@transaction.atomic
+@serialized_mutation
 def create_team(name, creator):
     if not creator.is_authenticated:
         raise PermissionDenied("Для создания команды необходим вход.")
@@ -24,7 +27,7 @@ def create_team(name, creator):
     return team
 
 
-@transaction.atomic
+@serialized_mutation
 def invite_user(team, actor, username):
     require_captain(team, actor)
     try:
@@ -51,7 +54,7 @@ def invite_user(team, actor, username):
         raise ValidationError("Приглашение уже ожидает ответа.") from error
 
 
-@transaction.atomic
+@serialized_mutation
 def respond_to_invitation(invitation, actor, accept):
     current = TeamInvitation.objects.get(pk=invitation.pk)
     if current.invitee_id != actor.pk:
@@ -63,14 +66,16 @@ def respond_to_invitation(invitation, actor, accept):
         raise ValidationError("Приглашение уже обработано.")
 
     if accept:
+        require_mutable_team(current.team)
         TeamMembership.objects.get_or_create(
             team=current.team, user=actor, defaults={"role": "member"}
         )
+        sync_team_rosters(current.team)
     current.status = new_status
     return current
 
 
-@transaction.atomic
+@serialized_mutation
 def cancel_invitation(invitation, actor):
     current = TeamInvitation.objects.get(pk=invitation.pk)
     require_captain(current.team, actor)
@@ -82,8 +87,10 @@ def cancel_invitation(invitation, actor):
     return current
 
 
-@transaction.atomic
+@serialized_mutation
 def transfer_captain(team, actor, new_captain):
+    require_captain(team, actor)
+    require_mutable_team(team)
     current = TeamMembership.objects.select_for_update().filter(
         team=team, user=actor, role="captain"
     ).first()
@@ -100,12 +107,14 @@ def transfer_captain(team, actor, new_captain):
     current.save(update_fields=["role"])
     successor.role = "captain"
     successor.save(update_fields=["role"])
+    sync_team_rosters(team)
     return successor
 
 
-@transaction.atomic
+@serialized_mutation
 def remove_member(team, actor, member):
     require_captain(team, actor)
+    require_mutable_team(team)
     membership = TeamMembership.objects.select_for_update().filter(
         team=team, user=member
     ).first()
@@ -114,10 +123,12 @@ def remove_member(team, actor, member):
     if membership.role == "captain":
         raise ValidationError("Сначала передайте капитанство другому участнику.")
     membership.delete()
+    sync_team_rosters(team)
 
 
-@transaction.atomic
+@serialized_mutation
 def leave_team(team, actor):
+    require_mutable_team(team)
     membership = TeamMembership.objects.select_for_update().filter(
         team=team, user=actor
     ).first()
@@ -126,3 +137,29 @@ def leave_team(team, actor):
     if membership.role == "captain":
         raise ValidationError("Сначала передайте капитанство другому участнику.")
     membership.delete()
+    sync_team_rosters(team)
+
+
+@serialized_mutation
+def add_team_member(team, user, role, actor):
+    """Organizer-only assignment, including captains of legacy teams."""
+    if not actor.is_active or not actor.is_staff or not actor.has_perm("competitions.add_teammembership"):
+        raise PermissionDenied("Нет права добавлять участников команды.")
+    validate_member_add(team, user, role)
+    membership = TeamMembership.objects.create(team=team, user=user, role=role)
+    sync_team_rosters(team)
+    return membership
+
+
+def validate_member_add(team, user, role):
+    require_mutable_team(team)
+    if role not in ("captain", "member"):
+        raise ValidationError("Неизвестная роль.")
+    if TeamMembership.objects.filter(team=team, user=user).exists():
+        raise ValidationError("Пользователь уже состоит в команде.")
+    if role == "captain" and team.memberships.filter(role="captain").exists():
+        raise ValidationError("У команды уже есть капитан.")
+    from .models import PlayerParticipation
+    competition_ids = team.participations.filter(is_active=True).exclude(competition__status="finished").values_list("competition_id", flat=True)
+    if PlayerParticipation.objects.filter(competition_id__in=competition_ids, user=user).exclude(participation__team=team).exists():
+        raise ValidationError("Игрок уже представляет другую команду в этом соревновании.")
