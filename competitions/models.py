@@ -1,4 +1,5 @@
 from django.conf import settings
+from django.core.exceptions import ValidationError
 from django.db import models
 from django.db.models import Q
 
@@ -19,6 +20,26 @@ class Competition(models.Model):
         default="draft"
     )
     
+    launch_state = models.CharField(
+        max_length=20,
+        choices=[
+            ("idle", "Не запускается"),
+            ("deploying", "Развёртывание"),
+            ("failed", "Ошибка запуска"),
+        ],
+        default="idle", editable=False,
+    )
+    roster_frozen_at = models.DateTimeField(null=True, blank=True, editable=False)
+    roster_verified = models.BooleanField(default=True, editable=False)
+
+    @property
+    def registration_open(self):
+        return (
+            self.status == "registration"
+            and self.launch_state == "idle"
+            and self.roster_frozen_at is None
+        )
+
     services = models.ManyToManyField(
     "Service",
     related_name="competitions",
@@ -109,6 +130,7 @@ class TeamInvitation(models.Model):
 
 
 class CompetitionParticipation(models.Model):
+    is_active = models.BooleanField(default=True)
     team = models.ForeignKey(
         Team, on_delete=models.PROTECT, related_name="participations"
     )
@@ -126,6 +148,42 @@ class CompetitionParticipation(models.Model):
 
     def __str__(self):
         return f"{self.team} — {self.competition}"
+
+
+class CompetitionMutationLock(models.Model):
+    """Singleton used to serialize short lifecycle/roster writes."""
+    revision = models.PositiveBigIntegerField(default=0)
+
+
+class PlayerParticipation(models.Model):
+    """Mutable registration claim, then a frozen competition roster entry."""
+
+    competition = models.ForeignKey(
+        Competition, on_delete=models.PROTECT, related_name="players"
+    )
+    participation = models.ForeignKey(
+        CompetitionParticipation, on_delete=models.PROTECT, related_name="players"
+    )
+    user = models.ForeignKey(
+        settings.AUTH_USER_MODEL, on_delete=models.PROTECT,
+        related_name="competition_players",
+    )
+    role = models.CharField(max_length=20, choices=TeamMembership.ROLE_CHOICES)
+
+    class Meta:
+        constraints = [
+            models.UniqueConstraint(
+                fields=["competition", "user"], name="unique_player_per_competition"
+            ),
+        ]
+
+    def clean(self):
+        super().clean()
+        if self.participation_id and self.participation.competition_id != self.competition_id:
+            raise ValidationError("Участие команды относится к другому соревнованию.")
+
+    def __str__(self):
+        return f"{self.user} — {self.participation}"
 
 
 class Service(models.Model):

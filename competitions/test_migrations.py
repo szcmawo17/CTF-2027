@@ -8,6 +8,7 @@ class LegacyRelationsMigrationTests(TransactionTestCase):
     migrate_to = ("competitions", "0012_finalize_participation_relations")
 
     def test_legacy_teams_and_container_references_survive(self):
+        latest = MigrationExecutor(connection).loader.graph.leaf_nodes()
         try:
             executor = MigrationExecutor(connection)
             executor.migrate([self.migrate_from])
@@ -121,4 +122,4 @@ class LegacyRelationsMigrationTests(TransactionTestCase):
             self.assertEqual(restored_service.container_id, "existing-container-id")
             self.assertEqual(RestoredTeamService.objects.count(), 4)
         finally:
-            MigrationExecutor(connection).migrate([self.migrate_to])
+            MigrationExecutor(connection).migrate(latest)

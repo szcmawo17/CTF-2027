@@ -6,6 +6,7 @@ from django.shortcuts import get_object_or_404, redirect, render
 from django.views.decorators.http import require_http_methods, require_POST
 
 from .models import Team, TeamInvitation, TeamMembership
+from .roster_services import team_roster_locked
 from .team_forms import TeamCreationForm, TeamInvitationForm
 from .team_services import (
     cancel_invitation,
@@ -32,6 +33,7 @@ def _team_context(team, user, invitation_form=None):
             "role", "user__username"
         ),
         "is_captain": is_captain,
+        "roster_locked": team_roster_locked(team),
         "invitation_form": invitation_form or TeamInvitationForm(),
         "pending_invitations": (
             team.invitations.filter(status="pending").select_related("invitee")
@@ -91,7 +93,10 @@ def team_invite(request, team_id):
 
 
 def _bad_request(error):
-    return HttpResponseBadRequest(" ".join(error.messages))
+    # Conflict messages can contain a user-controlled team name.
+    return HttpResponseBadRequest(
+        " ".join(error.messages), content_type="text/plain; charset=utf-8"
+    )
 
 
 @login_required
