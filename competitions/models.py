@@ -1,3 +1,5 @@
+import uuid
+
 from django.conf import settings
 from django.core.exceptions import ValidationError
 from django.db import models
@@ -26,11 +28,16 @@ class Competition(models.Model):
             ("idle", "Не запускается"),
             ("deploying", "Развёртывание"),
             ("failed", "Ошибка запуска"),
+            ("review", "Требуется ручное вмешательство"),
         ],
         default="idle", editable=False,
     )
     roster_frozen_at = models.DateTimeField(null=True, blank=True, editable=False)
     roster_verified = models.BooleanField(default=True, editable=False)
+    current_launch_attempt = models.ForeignKey(
+        "CompetitionLaunchAttempt", null=True, blank=True,
+        on_delete=models.PROTECT, related_name="current_for", editable=False,
+    )
 
     @property
     def registration_open(self):
@@ -48,6 +55,72 @@ class Competition(models.Model):
 
     def __str__(self):
         return self.name
+
+
+class CompetitionLaunchAttempt(models.Model):
+    STATES = [
+        ("in_progress", "Выполняется"),
+        ("succeeded", "Успешна"),
+        ("failed", "Ошибка до развёртывания"),
+        ("review", "Требует проверки"),
+    ]
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    competition = models.ForeignKey(
+        Competition, on_delete=models.PROTECT, related_name="launch_attempts"
+    )
+    initiated_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL, on_delete=models.SET_NULL, null=True,
+        related_name="competition_launch_attempts",
+    )
+    started_at = models.DateTimeField(auto_now_add=True)
+    finished_at = models.DateTimeField(null=True, blank=True)
+    state = models.CharField(max_length=20, choices=STATES, default="in_progress")
+    message = models.TextField(blank=True)
+
+    class Meta:
+        ordering = ["-started_at", "id"]
+        constraints = [
+            models.UniqueConstraint(
+                fields=["competition"], condition=Q(state__in=["in_progress", "review"]),
+                name="one_unresolved_launch_per_competition",
+            ),
+            models.CheckConstraint(
+                condition=(
+                    Q(state="in_progress", finished_at__isnull=True)
+                    | Q(state__in=["succeeded", "failed"], finished_at__isnull=False)
+                    | Q(state="review")
+                ), name="launch_attempt_state_and_end",
+            ),
+        ]
+
+    def __str__(self):
+        return f"{self.competition_id}: {self.id} ({self.get_state_display()})"
+
+
+class CompetitionRecoveryAction(models.Model):
+    # The diagnosis UUID is also a single-use action identifier.
+    id = models.UUIDField(primary_key=True, editable=False)
+    competition = models.ForeignKey(
+        Competition, on_delete=models.PROTECT, related_name="recovery_actions"
+    )
+    attempt = models.ForeignKey(
+        CompetitionLaunchAttempt, on_delete=models.PROTECT, null=True, blank=True,
+        related_name="recovery_actions",
+    )
+    initiated_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL, on_delete=models.SET_NULL, null=True,
+        related_name="competition_recovery_actions",
+    )
+    created_at = models.DateTimeField(auto_now_add=True)
+    action = models.CharField(
+        max_length=30, default="manual_review",
+        choices=[("manual_review", "Зафиксировать ручное вмешательство")],
+    )
+    message = models.TextField()
+    diagnosis = models.JSONField()
+
+    class Meta:
+        ordering = ["-created_at"]
 
 
 class Team(models.Model):

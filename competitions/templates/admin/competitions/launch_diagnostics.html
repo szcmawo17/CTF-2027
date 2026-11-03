@@ -1,0 +1,45 @@
+{% extends "admin/base_site.html" %}
+{% block content %}
+<h1>{{ competition.name }}</h1>
+<p>Соревнование: {{ competition.get_status_display }}. Запуск: {{ competition.get_launch_state_display }}.</p>
+<p>{{ instruction }}</p>
+<p>Диагностика читает состояние известных контейнеров. Она не доказывает остановку процесса и не обнаруживает все контейнеры без записи в базе.</p>
+<form method="post">{% csrf_token %}
+    <input type="hidden" name="operation" value="diagnose">
+    <button type="submit">Проверить БД и Docker без изменений</button>
+</form>
+{% if report %}
+<h2>Диагностика от {{ report.observed_at }}</h2>
+<p>Состав зафиксирован: {{ report.database.roster_frozen_at|default:"Нет" }}.</p>
+{% if not report.database.roster_verified %}<p>Исторический состав не подтверждён.</p>{% endif %}
+{% if not report.database_unchanged %}<p role="alert">Во время диагностики база изменилась. Повторите проверку.</p>{% endif %}
+<h3>Команды и игроки (идентификаторы)</h3>
+<ul>{% for team in report.database.teams %}
+    <li>Команда {{ team.team_id }}, участие {{ team.participation_id }}, активно: {{ team.active|yesno:"да,нет" }}
+        <ul>{% for player in team.players %}<li>Игрок {{ player.user_id }}: {{ player.role }}</li>{% empty %}<li>Игроков нет.</li>{% endfor %}</ul>
+    </li>
+{% empty %}<li>Команд нет.</li>{% endfor %}</ul>
+<h3>Сервисы в базе</h3>
+<table><tr><th>TeamService</th><th>Участие</th><th>Сервис</th><th>Статус БД</th><th>Порт</th></tr>
+{% for service in report.database.services %}<tr><td>{{ service.id }}</td><td>{{ service.participation_id }}</td><td>{{ service.service_id }}</td><td>{{ service.status }}</td><td>{{ service.host_port|default:"—" }}</td></tr>{% endfor %}</table>
+<h3>Наблюдение Docker</h3>
+<p>missing — контейнер отсутствует; unassigned — ID не сохранён; unavailable — Docker недоступен; unknown — неизвестное состояние.</p>
+<table><tr><th>TeamService</th><th>Docker</th><th>Статус совпадает с БД</th><th>Порт совпадает и опубликован на localhost</th></tr>
+{% for item in report.containers %}<tr><td>{{ item.team_service_id }}</td><td>{{ item.state }}</td><td>{{ item.status_matches|yesno:"да,нет" }}</td><td>{{ item.localhost_port_matches|yesno:"да,нет,не проверен" }}</td></tr>{% endfor %}</table>
+<p>Отсутствующие записи сервисов (участие, сервис): {{ report.missing_services|default:"нет" }}</p>
+<p>Лишние записи сервисов: {{ report.unexpected_services|default:"нет" }}</p>
+{% if can_request_review %}
+<form method="post">{% csrf_token %}
+    <input type="hidden" name="operation" value="manual_review">
+    <input type="hidden" name="diagnosis_token" value="{{ diagnosis_token }}">
+    <p>Действие запишет необходимость ручного вмешательства и запретит запись результата старой попыткой. Контейнеры и состав не изменятся. Действительно 5 минут.</p>
+    <button type="submit">Зафиксировать ручное вмешательство</button>
+</form>
+{% endif %}
+{% endif %}
+<h2>Попытки запуска</h2>
+<table><tr><th>ID</th><th>Организатор</th><th>Начало</th><th>Окончание</th><th>Состояние</th><th>Сообщение</th></tr>
+{% for attempt in attempts %}<tr><td>{{ attempt.pk }}</td><td>{{ attempt.initiated_by|default:"Удалён" }}</td><td>{{ attempt.started_at }}</td><td>{{ attempt.finished_at|default:"Не подтверждено" }}</td><td>{{ attempt.get_state_display }}</td><td>{{ attempt.message }}</td></tr>{% empty %}<tr><td colspan="6">Запусков в новом журнале ещё нет. Старые запуски автоматически не восстанавливаются.</td></tr>{% endfor %}</table>
+<h2>История действий восстановления</h2>
+<ul>{% for event in recovery_actions %}<li>{{ event.created_at }} — {{ event.initiated_by|default:"Удалён" }}: {{ event.get_action_display }}. {{ event.message }}</li>{% empty %}<li>Действий нет.</li>{% endfor %}</ul>
+{% endblock %}

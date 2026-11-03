@@ -9,7 +9,7 @@ from .models import CompetitionMutationLock
 
 
 @contextmanager
-def mutation_transaction():
+def mutation_transaction(*, durable=False):
     """First SQL statement acquires a write lock, before reading roster state.
 
     SQLite serializes database writers; PostgreSQL locks this singleton row.
@@ -17,7 +17,7 @@ def mutation_transaction():
     Busy requests fail safely and can be retried by the caller.
     """
     try:
-        with transaction.atomic():
+        with transaction.atomic(durable=durable):
             if not CompetitionMutationLock.objects.filter(pk=1).update(revision=F("revision") + 1):
                 raise ValidationError("Не создана блокировка состава. Примените миграции.")
             yield
@@ -29,9 +29,11 @@ def mutation_transaction():
         raise ValidationError("Данные сейчас изменяются другим запросом. Повторите действие.") from error
 
 
-def serialized_mutation(function):
+def serialized_mutation(function=None, *, durable=False):
+    if function is None:
+        return lambda wrapped: serialized_mutation(wrapped, durable=durable)
     @wraps(function)
     def wrapped(*args, **kwargs):
-        with mutation_transaction():
+        with mutation_transaction(durable=durable):
             return function(*args, **kwargs)
     return wrapped
