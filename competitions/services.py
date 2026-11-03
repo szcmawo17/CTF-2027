@@ -1,9 +1,10 @@
 import logging
 
 from django.core.exceptions import PermissionDenied, ValidationError
+from django.db import transaction
 from django.utils import timezone
 
-from .models import Competition, TeamService
+from .models import Competition, CompetitionLaunchAttempt, TeamService
 from .mutation import serialized_mutation
 from .roster_services import sync_participation_roster, validate_start_rosters
 
@@ -104,48 +105,109 @@ def open_registration(competition, actor):
     return current
 
 
-@serialized_mutation
-def _prepare_start(competition):
+@serialized_mutation(durable=True)
+def _prepare_start(competition, actor):
+    require_organizer(actor)
     current = Competition.objects.get(pk=competition.pk)
     if current.status != "registration":
         raise ValidationError("Запуск разрешён только после открытия регистрации.")
-    if current.launch_state == "deploying":
-        raise ValidationError("Запуск уже выполняется. Повторный запуск запрещён.")
-    if current.roster_frozen_at is None:
-        validate_start_rosters(current)
-        current.roster_frozen_at = timezone.now()
-    # A failed attempt retries the same frozen roster; registration stays closed.
+    if current.launch_state != "idle" or current.launch_attempts.filter(
+        state__in=("in_progress", "review")
+    ).exists():
+        raise ValidationError(
+            "Запуск уже выполняется или требует проверки. Откройте диагностику в Admin."
+        )
+
+    attempt = CompetitionLaunchAttempt.objects.create(
+        competition=current, initiated_by=actor,
+        message="Проверка условий запуска.",
+    )
+    try:
+        # A failed roster validation must not commit a partially updated roster.
+        with transaction.atomic():
+            validate_start_rosters(current)
+    except ValidationError:
+        attempt.state = "failed"
+        attempt.finished_at = timezone.now()
+        attempt.message = (
+            "Условия запуска не выполнены. Проверьте наличие сервисов, команд, "
+            "активных участников и одного капитана в каждой команде."
+        )
+        attempt.save(update_fields=["state", "finished_at", "message"])
+        current.current_launch_attempt = attempt
+        current.save(update_fields=["current_launch_attempt"])
+        return current, attempt, False
+
+    current.roster_frozen_at = current.roster_frozen_at or timezone.now()
     current.launch_state = "deploying"
-    current.save(update_fields=["roster_frozen_at", "launch_state"])
-    return current
+    current.current_launch_attempt = attempt
+    current.save(update_fields=["roster_frozen_at", "launch_state", "current_launch_attempt"])
+    attempt.message = "Состав зафиксирован. Начато развёртывание."
+    attempt.save(update_fields=["message"])
+    return current, attempt, True
 
 
 @serialized_mutation
-def _record_launch_result(competition, successful):
+def _record_launch_result(competition, attempt_id):
     current = Competition.objects.get(pk=competition.pk)
-    if current.status != "registration" or current.launch_state != "deploying":
-        raise ValidationError("Состояние запуска изменилось; нужна проверка организатора.")
-    current.launch_state = "idle" if successful else "failed"
-    if successful:
-        current.status = "running"
+    attempt = CompetitionLaunchAttempt.objects.get(pk=attempt_id, competition=current)
+    if (
+        current.current_launch_attempt_id != attempt.pk
+        or current.status != "registration"
+        or current.launch_state != "deploying"
+        or attempt.state != "in_progress"
+    ):
+        raise ValidationError("Результат устаревшей или уже обработанной попытки отклонён.")
+    attempt.state = "succeeded"
+    attempt.finished_at = timezone.now()
+    attempt.message = "Развёртывание завершено; результат сохранён."
+    attempt.save(update_fields=["state", "finished_at", "message"])
+    current.launch_state = "idle"
+    current.status = "running"
     current.save(update_fields=["launch_state", "status"])
     return current
 
 
+@serialized_mutation
+def _mark_launch_uncertain(competition, attempt_id):
+    current = Competition.objects.get(pk=competition.pk)
+    if current.current_launch_attempt_id != attempt_id:
+        return
+    attempt = CompetitionLaunchAttempt.objects.get(pk=attempt_id, competition=current)
+    if attempt.state != "in_progress" or current.launch_state != "deploying":
+        return
+    attempt.state = "review"
+    attempt.finished_at = timezone.now()
+    attempt.message = (
+        "Исход развёртывания или запись результата не подтверждены. "
+        "Нужна диагностика; повторный запуск заблокирован."
+    )
+    attempt.save(update_fields=["state", "finished_at", "message"])
+    current.launch_state = "review"
+    current.save(update_fields=["launch_state"])
+
+
 def start_competition(competition, actor=None):
-    """Commit the registration barrier and roster BEFORE any external operation."""
+    """Commit attempt + frozen roster before Docker; never claim DB/Docker atomicity."""
     require_organizer(actor)
-    current = _prepare_start(competition)
+    current, attempt, ready = _prepare_start(competition, actor)
+    if not ready:
+        raise ValidationError(attempt.message)
     try:
         deploy_competition_services(current)
-    except Exception as error:
-        _record_launch_result(current, successful=False)
-        logger.exception("Competition deployment failed: %s", current.pk)
+        current = _record_launch_result(current, attempt.pk)
+    except Exception:
+        # No raw exception text/traceback: SDK errors may contain credentials.
+        logger.error("Launch outcome uncertain: competition=%s attempt=%s", current.pk, attempt.pk)
+        try:
+            _mark_launch_uncertain(current, attempt.pk)
+        except Exception:
+            # The committed in_progress attempt remains visible even if DB is unavailable.
+            logger.error("Cannot record launch review marker: attempt=%s", attempt.pk)
         raise ValidationError(
-            "Развёртывание завершилось ошибкой. Соревнование не запущено, "
-            "регистрация и состав остаются закрыты. Устраните причину и повторите запуск."
-        ) from error
-    current = _record_launch_result(current, successful=True)
+            "Запуск требует ручной проверки. Откройте диагностику в Admin. "
+            "Не повторяйте развёртывание до проверки процесса и контейнеров."
+        ) from None
     competition.status = current.status
     return current
 

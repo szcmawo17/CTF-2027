@@ -125,7 +125,7 @@ class LifecycleTests(LifecycleFixtures, TestCase):
         self.competition.refresh_from_db()
         self.assertTrue(self.competition.registration_open)
 
-    def test_failure_keeps_roster_closed_and_retry_uses_same_snapshot(self):
+    def test_failure_keeps_roster_closed_and_blocks_unsafe_retry(self):
         participation = self.register_red()
         original = list(participation.players.values_list("pk", "user_id", "role"))
         with patch("competitions.services.deploy_competition_services", side_effect=RuntimeError("mock failure")):
@@ -134,16 +134,18 @@ class LifecycleTests(LifecycleFixtures, TestCase):
                     start_competition(self.competition, self.organizer)
         self.competition.refresh_from_db()
         self.assertEqual(self.competition.status, "registration")
-        self.assertEqual(self.competition.launch_state, "failed")
+        self.assertEqual(self.competition.launch_state, "review")
         frozen = self.competition.roster_frozen_at
         with self.assertRaises(ValidationError):
             register_team(self.competition, self.blue, self.bob)
         with self.assertRaises(ValidationError):
             withdraw_team(self.competition, self.red, self.alice)
-        with patch("competitions.services.deploy_competition_services"):
-            start_competition(self.competition, self.organizer)
+        with patch("competitions.services.deploy_competition_services") as deploy:
+            with self.assertRaises(ValidationError):
+                start_competition(self.competition, self.organizer)
+            deploy.assert_not_called()
         self.competition.refresh_from_db()
-        self.assertEqual(self.competition.status, "running")
+        self.assertEqual(self.competition.status, "registration")
         self.assertEqual(self.competition.roster_frozen_at, frozen)
         self.assertEqual(list(participation.players.values_list("pk", "user_id", "role")), original)
 
