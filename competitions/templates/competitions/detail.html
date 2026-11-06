@@ -6,6 +6,7 @@
 <h1>{{ competition.name }}</h1>
 <p>{{ competition.description }}</p>
 <p>Состояние: {{ competition.get_status_display }}</p>
+<p><a href="{% url 'game_scoreboard' competition.id %}">Таблица очков</a>{% if user.is_authenticated %} · <a href="{% url 'game_detail' competition.id %}">Игровой цикл (участники и организатор)</a>{% endif %}</p>
 
 {% if registration_error %}<p role="alert">{{ registration_error }}</p>{% endif %}
 {% if not registration_open %}<p>Регистрация закрыта.</p>{% endif %}

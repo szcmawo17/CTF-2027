@@ -1,0 +1,11 @@
+{% extends "base.html" %}
+{% block content %}
+<h1>{{ competition.name }}: таблица очков</h1>
+<p>Mock-режим. Атака: +10 за флаг соперника, один раз на команду. Защита: +10 за сохранённый и никем не сданный флаг. Доступность: +1 за успешную проверку сервиса.</p>
+<p>Очки защиты и доступности начисляются при завершении раунда. До этого итог предварительный.</p>
+<table><thead><tr><th>Команда</th><th>Атака</th><th>Защита</th><th>Доступность</th><th>Итого</th></tr></thead><tbody>
+{% for row in rows %}<tr><td>{{ row.team.name }}</td><td>{{ row.attack }}</td><td>{{ row.defense }}</td><td>{{ row.availability }}</td><td>{{ row.total }}</td></tr>{% empty %}<tr><td colspan="5">Команд пока нет.</td></tr>{% endfor %}
+</tbody></table>
+<h2>Последние раунды</h2><ul>{% for round in rounds %}<li>{{ round.number }}: {{ round.get_state_display }} ({{ round.started_at }} — {{ round.expires_at }})</li>{% empty %}<li>Раундов нет.</li>{% endfor %}</ul>
+<p><a href="{% url 'competition_detail' competition.id %}">Соревнование</a>{% if user.is_authenticated %} · <a href="{% url 'game_detail' competition.id %}">Игровой цикл</a>{% endif %}</p>
+{% endblock %}

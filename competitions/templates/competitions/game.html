@@ -1,0 +1,36 @@
+{% extends "base.html" %}
+{% block title %}Игровой цикл — {{ competition.name }}{% endblock %}
+{% block content %}
+<h1>{{ competition.name }}: игровой цикл</h1>
+<p>Режим: mock-checker. Проверяется тестовое хранилище, а не реальные контейнеры.</p>
+<p><a href="{% url 'competition_detail' competition.id %}">Соревнование</a> · <a href="{% url 'game_scoreboard' competition.id %}">Таблица очков</a></p>
+<p>Статус соревнования: {{ competition.get_status_display }}</p>
+{% if game_round %}
+<h2>Раунд {{ game_round.number }} — {{ game_round.get_state_display }}</h2>
+<p>Начало: {{ game_round.started_at }}. Приём флагов до: {{ game_round.expires_at }}.</p>
+<p>По истечении срока флаги не принимаются. Итоги фиксирует организатор при завершении раунда.</p>
+{% else %}<p>Раунды ещё не открывались.</p>{% endif %}
+{% if organizer and competition.status == "running" %}
+  {% if game_round.state == "open" %}
+  <form method="post" action="{% url 'game_finish_round' competition.id game_round.id %}">{% csrf_token %}<button>Завершить раунд {{ game_round.number }}</button></form>
+  {% else %}
+  <form method="post" action="{% url 'game_open_round' competition.id %}">{% csrf_token %}<input type="hidden" name="number" value="{{ next_number }}"><button>Открыть mock-раунд {{ next_number }} на 5 минут</button></form>
+  {% endif %}
+{% endif %}
+{% if player %}
+<h2>Сервисы вашей команды: {{ player.participation.team.name }}</h2>
+<table><thead><tr><th>Сервис</th><th>Установка флага</th><th>Сохранность</th><th>Работоспособность</th></tr></thead><tbody>
+{% for result in own_results %}<tr><td>{{ result.flag__team_service__service__name }}</td><td>{{ result.put_status }}</td><td>{{ result.get_status|default:"Ожидает завершения" }}</td><td>{{ result.service_status|default:"Ожидает завершения" }}</td></tr>
+{% empty %}<tr><td colspan="4">Проверок пока нет.</td></tr>{% endfor %}
+</tbody></table>
+<p>OK — успешно; DOWN — недоступен; MUMBLE — неправильный ответ или потеря флага; ERROR — ошибка checker/платформы.</p>
+{% if competition.status == "running" and game_round.state == "open" %}
+<h2>Отправить флаг соперника</h2>
+<form method="post" action="{% url 'game_submit_flag' competition.id %}">{% csrf_token %}
+<label for="flag">Флаг</label><input id="flag" type="password" name="flag" maxlength="69" autocomplete="off" required>
+<button>Отправить</button></form><p>До 30 попыток за минуту на всю команду.</p>
+{% else %}<p>Приём флагов закрыт.</p>{% endif %}
+<h2>Ваши последние успешные отправки</h2>
+<ul>{% for capture in captures %}<li>{{ capture.created_at }}: +10 очков атаки.</li>{% empty %}<li>Отправок пока нет.</li>{% endfor %}</ul>
+{% endif %}
+{% endblock %}
