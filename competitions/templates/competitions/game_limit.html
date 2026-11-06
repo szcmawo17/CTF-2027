@@ -1,0 +1,2 @@
+{% extends "base.html" %}
+{% block content %}<h1>Лимит отправок</h1><p>Команда достигла лимита: 30 попыток за минуту. Повторите позже.</p><a href="{% url 'game_detail' competition.id %}">Вернуться к раунду</a>{% endblock %}

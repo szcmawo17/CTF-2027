@@ -13,6 +13,7 @@ from .models import (
     Competition, CompetitionParticipation, PlayerParticipation, Team,
     TeamInvitation, TeamMembership, Service, TeamService,
     CompetitionLaunchAttempt, CompetitionRecoveryAction,
+    Round, CheckerRun, Capture, ScoreEvent,
 )
 from .mutation import mutation_transaction
 from .services import open_registration, start_competition, finish_competition
@@ -65,7 +66,7 @@ class SerializedAdmin(admin.ModelAdmin):
 
 @admin.register(Competition)
 class CompetitionAdmin(SerializedAdmin):
-    list_display = ("name", "status", "launch_state", "current_launch_attempt", "launch_tools")
+    list_display = ("name", "status", "launch_state", "current_launch_attempt", "launch_tools", "game_tools")
     list_filter = ("status", "launch_state")
     actions = [open_registrations, start_competitions, finish_competitions]
 
@@ -89,6 +90,10 @@ class CompetitionAdmin(SerializedAdmin):
             self.admin_site.admin_view(self.launch_diagnostics),
             name="competitions_launch_diagnostics",
         )] + super().get_urls()
+
+    @admin.display(description="Игровой цикл")
+    def game_tools(self, obj):
+        return format_html('<a href="{}">Раунды (mock)</a>', reverse("game_detail", args=[obj.pk]))
 
     @method_decorator(require_http_methods(["GET", "POST"]))
     def launch_diagnostics(self, request, competition_id):
@@ -178,6 +183,26 @@ class ReadOnlyAdmin(admin.ModelAdmin):
 class OrganizerHistoryAdmin(ReadOnlyAdmin):
     def has_view_permission(self, request, obj=None):
         return request.user.is_active and request.user.is_staff and request.user.has_perm("competitions.change_competition")
+
+
+@admin.register(Round)
+class RoundAdmin(OrganizerHistoryAdmin):
+    list_display = ("competition", "number", "state", "started_at", "expires_at", "finished_at", "checker_backend")
+
+
+@admin.register(CheckerRun)
+class CheckerRunAdmin(OrganizerHistoryAdmin):
+    list_display = ("flag_id", "put_status", "get_status", "service_status", "checked_at")
+
+
+@admin.register(Capture)
+class CaptureAdmin(OrganizerHistoryAdmin):
+    list_display = ("id", "attacker", "submitted_by", "created_at")
+
+
+@admin.register(ScoreEvent)
+class ScoreEventAdmin(OrganizerHistoryAdmin):
+    list_display = ("id", "participation", "kind", "points", "created_at")
 
 
 @admin.register(CompetitionLaunchAttempt)

@@ -218,6 +218,8 @@ def finish_competition(competition, actor):
     current = Competition.objects.get(pk=competition.pk)
     if current.status != "running":
         raise ValidationError("Завершить можно только идущее соревнование.")
+    if current.rounds.filter(state="open").exists():
+        raise ValidationError("Сначала завершите открытый игровой раунд.")
     current.status = "finished"
     current.save(update_fields=["status"])
     competition.status = current.status
