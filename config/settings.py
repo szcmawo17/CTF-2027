@@ -134,3 +134,7 @@ MAILERS = {
 LOGIN_URL = "login"
 LOGIN_REDIRECT_URL = "profile"
 LOGOUT_REDIRECT_URL = "login"
+
+# Separate Fernet key file outside Git, readable only by the trusted operator.
+# Never reuse DJANGO_SECRET_KEY. HTTP backend fails closed if unavailable.
+CHECKER_KEY_FILE = os.environ.get("CTF_CHECKER_KEY_FILE", "")

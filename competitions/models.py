@@ -262,6 +262,7 @@ class PlayerParticipation(models.Model):
 class Service(models.Model):
     name = models.CharField(max_length=100)
     description = models.TextField()
+    runtime = models.CharField(max_length=20, default="legacy", choices=[("legacy", "Существующий тестовый сервис"), ("training_http", "Учебные заметки (HTTP checker)")])
 
     def __str__(self):
         return self.name
@@ -311,18 +312,18 @@ class Round(models.Model):
     started_at = models.DateTimeField()
     expires_at = models.DateTimeField()
     finished_at = models.DateTimeField(null=True, blank=True)
-    state = models.CharField(max_length=12, choices=[("open", "Открыт"), ("finished", "Завершён")])
+    state = models.CharField(max_length=12, choices=[("open", "Открыт"), ("checking", "Проверки выполняются"), ("finished", "Завершён")])
     checker_backend = models.CharField(max_length=16, default="mock", editable=False)
 
     class Meta:
         ordering = ["-number"]
         constraints = [
             models.UniqueConstraint(fields=["competition", "number"], name="unique_competition_round"),
-            models.UniqueConstraint(fields=["competition"], condition=Q(state="open"), name="one_open_round"),
+            models.UniqueConstraint(fields=["competition"], condition=Q(state__in=["open", "checking"]), name="one_open_round"),
             models.CheckConstraint(condition=Q(number__gte=1), name="positive_round_number"),
             models.CheckConstraint(condition=Q(expires_at__gt=models.F("started_at")), name="round_expiry_after_start"),
-            models.CheckConstraint(condition=(Q(state="open", finished_at__isnull=True) | Q(state="finished", finished_at__isnull=False, finished_at__gte=models.F("started_at"))), name="round_state_and_end"),
-            models.CheckConstraint(condition=Q(checker_backend="mock"), name="round_mock_backend_only"),
+            models.CheckConstraint(condition=(Q(state__in=["open", "checking"], finished_at__isnull=True) | Q(state="finished", finished_at__isnull=False, finished_at__gte=models.F("started_at"))), name="round_state_and_end"),
+            models.CheckConstraint(condition=Q(checker_backend__in=["mock", "http"]), name="round_known_backend"),
         ]
 
     def __str__(self):
@@ -333,7 +334,7 @@ class Flag(models.Model):
     round = models.ForeignKey(Round, on_delete=models.PROTECT, related_name="flags")
     team_service = models.ForeignKey(TeamService, on_delete=models.PROTECT, related_name="flags")
     digest = models.CharField(max_length=64, unique=True, editable=False)
-    state = models.CharField(max_length=12, choices=[("issued", "Создан"), ("installed", "Установлен в mock"), ("rejected", "Не установлен")])
+    state = models.CharField(max_length=12, choices=[("issued", "Создан"), ("installed", "Установка подтверждена"), ("rejected", "Не установлен")])
 
     class Meta:
         constraints = [
@@ -352,14 +353,14 @@ CHECKER_STATUSES = [(code, code) for code in ("OK", "DOWN", "MUMBLE", "ERROR")]
 
 class CheckerRun(models.Model):
     flag = models.OneToOneField(Flag, on_delete=models.PROTECT, related_name="checker_run")
-    put_status = models.CharField(max_length=8, choices=CHECKER_STATUSES)
+    put_status = models.CharField(max_length=8, choices=CHECKER_STATUSES, blank=True, default="")
     get_status = models.CharField(max_length=8, choices=CHECKER_STATUSES, blank=True, default="")
     service_status = models.CharField(max_length=8, choices=CHECKER_STATUSES, blank=True, default="")
     checked_at = models.DateTimeField(null=True, blank=True)
 
     class Meta:
         constraints = [
-            models.CheckConstraint(condition=Q(put_status__in=["OK", "DOWN", "MUMBLE", "ERROR"]), name="valid_checker_put"),
+            models.CheckConstraint(condition=Q(put_status__in=["", "OK", "DOWN", "MUMBLE", "ERROR"]), name="valid_checker_put"),
             models.CheckConstraint(condition=(
                 Q(checked_at__isnull=True, get_status="", service_status="")
                 | Q(checked_at__isnull=False, get_status__in=["OK", "DOWN", "MUMBLE", "ERROR"], service_status__in=["OK", "DOWN", "MUMBLE", "ERROR"])
@@ -428,5 +429,60 @@ class SubmissionWindow(models.Model):
     participation = models.OneToOneField(CompetitionParticipation, on_delete=models.PROTECT, related_name="submission_window")
     started_at = models.DateTimeField()
     count = models.PositiveIntegerField(default=0)
+
+
+class CheckerEndpoint(models.Model):
+    """Provisioner-owned allowlist. Never editable through player/admin forms."""
+    team_service = models.OneToOneField(TeamService, on_delete=models.PROTECT, related_name="checker_endpoint")
+    instance_id = models.UUIDField(default=uuid.uuid4, unique=True, editable=False)
+    token_ciphertext = models.TextField(editable=False)
+    container_id = models.CharField(max_length=100, blank=True, default="", editable=False)
+    port = models.PositiveIntegerField(null=True, editable=False)
+
+    class Meta:
+        constraints = [models.CheckConstraint(condition=Q(port__isnull=True) | Q(port__gte=1024, port__lte=65535), name="checker_loopback_port")]
+
+
+class FlagMaterial(models.Model):
+    """Short-lived encrypted outbox; not a flag export interface."""
+    flag = models.OneToOneField(Flag, on_delete=models.PROTECT, related_name="material")
+    ciphertext = models.TextField(editable=False)
+    expires_at = models.DateTimeField()
+
+
+class CheckerJob(models.Model):
+    OPERATIONS = [(x, x) for x in ("put_flag", "get_flag", "check_service")]
+    STATES = [(x, x) for x in ("pending", "running", "done", "expired")]
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    # Round and TeamService are reached via flag: no redundant cross-table IDs.
+    flag = models.ForeignKey(Flag, on_delete=models.PROTECT, related_name="jobs")
+    endpoint = models.ForeignKey(CheckerEndpoint, on_delete=models.PROTECT, related_name="jobs")
+    instance_id = models.UUIDField(editable=False)
+    port = models.PositiveIntegerField()
+    container_id = models.CharField(max_length=100)
+    operation = models.CharField(max_length=16, choices=OPERATIONS)
+    state = models.CharField(max_length=10, choices=STATES, default="pending")
+    attempts = models.PositiveSmallIntegerField(default=0)
+    lease = models.UUIDField(null=True, editable=False)
+    lease_until = models.DateTimeField(null=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    started_at = models.DateTimeField(null=True)
+    finished_at = models.DateTimeField(null=True)
+    deadline = models.DateTimeField()
+    result = models.CharField(max_length=8, choices=CHECKER_STATUSES, blank=True, default="")
+    error_code = models.CharField(max_length=32, blank=True, default="")
+
+    class Meta:
+        indexes = [models.Index(fields=["state", "created_at"], name="checker_job_queue")]
+        constraints = [
+            models.UniqueConstraint(fields=["flag", "operation"], name="one_checker_job_per_operation"),
+            models.CheckConstraint(condition=Q(operation__in=["put_flag", "get_flag", "check_service"]), name="known_checker_operation"),
+            models.CheckConstraint(condition=Q(attempts__lte=3), name="bounded_checker_attempts"),
+            models.CheckConstraint(condition=(
+                Q(state="pending", finished_at__isnull=True, lease__isnull=True, lease_until__isnull=True, result="")
+                | Q(state="running", finished_at__isnull=True, lease__isnull=False, lease_until__isnull=False, started_at__isnull=False, result="")
+                | Q(state__in=["done", "expired"], finished_at__isnull=False, result__in=["OK", "DOWN", "MUMBLE", "ERROR"])
+            ), name="checker_job_state_fields"),
+        ]
 
 

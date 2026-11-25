@@ -1,30 +1,16 @@
 """Trusted, bounded, local simulator. No imports/scripts/URLs supplied by users."""
 import hashlib
 import hmac
-from enum import Enum
-from typing import Protocol
 
 from django.views.decorators.debug import sensitive_variables
 
 from .models import MockFlagStorage
-
-
-class CheckerStatus(str, Enum):
-    OK = "OK"
-    DOWN = "DOWN"      # Service cannot be reached.
-    MUMBLE = "MUMBLE"  # Reachable, but protocol/data verification failed.
-    ERROR = "ERROR"    # Checker/platform fault; not evidence of service failure.
+from .checker_protocol import Checker, CheckerStatus
 
 
 @sensitive_variables()
 def flag_digest(value):
     return hashlib.sha256(value.encode("ascii")).hexdigest()
-
-
-class Checker(Protocol):
-    def put_flag(self, team_service_id: int, flag_id: int, value: str) -> CheckerStatus: ...
-    def get_flag(self, team_service_id: int, flag_id: int, expected_digest: str) -> CheckerStatus: ...
-    def check_service(self, team_service_id: int) -> CheckerStatus: ...
 
 
 class MockChecker:

@@ -41,16 +41,18 @@ def player_for(competition, actor):
 
 @sensitive_variables()
 @serialized_mutation
-def open_round(competition, actor, *, number, duration=300):
+def open_round(competition, actor, *, number, duration=300, backend="mock"):
     require_organizer(actor)
     current = Competition.objects.get(pk=competition.pk)
     require_running(current)
+    if backend not in ("mock", "http"):
+        raise ValidationError("Неизвестный checker backend.")
     if not current.roster_frozen_at or not current.roster_verified:
         raise ValidationError("Для игры нужен подтверждённый зафиксированный состав.")
     if type(number) is not int or type(duration) is not int or not 30 <= duration <= 3600:
         raise ValidationError("Длительность раунда: от 30 до 3600 секунд; номер должен быть целым.")
     last = current.rounds.aggregate(number=Max("number"))["number"] or 0
-    if number != last + 1 or current.rounds.filter(state="open").exists():
+    if number != last + 1 or current.rounds.exclude(state="finished").exists():
         raise ValidationError("Раунд уже открыт или номер устарел. Обновите страницу.")
     participations = list(current.participations.filter(is_active=True).prefetch_related("players"))
     if len(participations) < 2:
@@ -70,7 +72,7 @@ def open_round(competition, actor, *, number, duration=300):
     now = timezone.now()
     game_round = Round.objects.create(
         competition=current, number=number, started_at=now,
-        expires_at=now + timedelta(seconds=duration), state="open",
+        expires_at=now + timedelta(seconds=duration), state="open", checker_backend=backend,
     )
     # Only the bounded DB simulator is allowed inside this short transaction.
     # External checkers must use a future worker protocol, never this call site.
@@ -78,6 +80,10 @@ def open_round(competition, actor, *, number, duration=300):
     for service in services:
         value = "CTF{" + secrets.token_hex(32) + "}"
         flag = Flag.objects.create(round=game_round, team_service=service, digest=flag_digest(value), state="issued")
+        if backend == "http":
+            from .checker_jobs import queue_install
+            queue_install(flag, value)
+            continue
         result = checked_call(checker.put_flag, service.pk, flag.pk, value)
         CheckerRun.objects.create(flag=flag, put_status=result)
         flag.state = "installed" if result == "OK" else "rejected"
@@ -92,6 +98,10 @@ def finish_round(game_round, actor):
     require_running(current.competition)
     if current.state != "open":
         raise ValidationError("Завершённый раунд нельзя изменить или завершить повторно.")
+    if current.checker_backend == "http":
+        from .checker_jobs import begin_checks
+        begin_checks(current)
+        return current
     checker = MockChecker()
     now = timezone.now()
     for flag in current.flags.select_related("team_service", "checker_run"):
@@ -103,6 +113,14 @@ def finish_round(game_round, actor):
         run.service_status = checked_call(checker.check_service, flag.team_service_id)
         run.checked_at = now
         run.save(update_fields=["get_status", "service_status", "checked_at"])
+    finalize_scores(current, now)
+    return current
+
+
+def finalize_scores(current, now):
+    """Caller holds mutation lock; all checker results must be terminal."""
+    for flag in current.flags.select_related("team_service", "checker_run"):
+        run = flag.checker_run
         if run.get_status == "OK" and run.put_status == "OK" and not flag.captures.exists():
             ScoreEvent.objects.create(flag=flag, participation_id=flag.team_service.participation_id, kind="defense", points=10)
         if run.service_status == "OK":
@@ -110,7 +128,6 @@ def finish_round(game_round, actor):
     current.state = "finished"
     current.finished_at = now
     current.save(update_fields=["state", "finished_at"])
-    return current
 
 
 @dataclass(frozen=True)

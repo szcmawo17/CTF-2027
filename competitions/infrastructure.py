@@ -25,6 +25,9 @@ def validate_container_ports(container):
 
 
 def deploy_team_service(team_service):
+    if team_service.service.runtime == "training_http":
+        from .training_infrastructure import deploy_training_service
+        return deploy_training_service(team_service)
     client = get_docker_client()
 
     # Проверяем, есть ли уже контейнер
