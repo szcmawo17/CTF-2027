@@ -28,6 +28,8 @@ class RealHTTPIntegrationTests(HTTPFixtures, TransactionTestCase):
             token = unseal(endpoint.token_ciphertext, f"endpoint:{endpoint.instance_id}")
             app = create_app(database=Path(self.keydir.name) / f"service-{endpoint.pk}.sqlite3", token=token, instance_id=endpoint.instance_id)
             server = make_server("127.0.0.1", 0, app, threaded=True, request_handler=QuietHandler)
+            # Register before start: a thread-start failure must release the port.
+            self.addCleanup(server.server_close)
             thread = threading.Thread(target=server.serve_forever, kwargs={"poll_interval": 0.05}, daemon=True)
             thread.start()
 
@@ -35,6 +37,7 @@ class RealHTTPIntegrationTests(HTTPFixtures, TransactionTestCase):
                 server.shutdown()
                 server.server_close()
                 thread.join(timeout=5)
+                self.assertFalse(thread.is_alive(), "HTTP test server did not stop")
 
             self.addCleanup(cleanup)
             endpoint.port = server.server_port

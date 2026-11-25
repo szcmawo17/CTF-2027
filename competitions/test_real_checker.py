@@ -285,7 +285,23 @@ class CheckerJobTests(HTTPFixtures, TransactionTestCase):
         self.assertEqual(len({c.job_id for c in claims}), len(claims))
 
 
+def _sleeping_checker_child(send, payload):
+    import time
+    time.sleep(60)
+
+
 class HTTPProtocolTests(SimpleTestCase):
+    def test_real_stalled_child_is_terminated_without_network(self):
+        import multiprocessing
+        import time
+        before = {p.pid for p in multiprocessing.active_children()}
+        started = time.monotonic()
+        with patch("competitions.checker_http._child", _sleeping_checker_child), patch("competitions.checker_http.HTTP_BUDGET", 0.2):
+            result = bounded_http({})
+        self.assertEqual(result, HTTPResult("ERROR", "timeout", True))
+        self.assertLess(time.monotonic() - started, 15)
+        self.assertEqual({p.pid for p in multiprocessing.active_children()}, before)
+
     def test_real_child_exits_without_network_for_invalid_operation(self):
         import multiprocessing
         before = {p.pid for p in multiprocessing.active_children()}
