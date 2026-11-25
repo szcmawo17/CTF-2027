@@ -13,7 +13,7 @@ from .models import (
     Competition, CompetitionParticipation, PlayerParticipation, Team,
     TeamInvitation, TeamMembership, Service, TeamService,
     CompetitionLaunchAttempt, CompetitionRecoveryAction,
-    Round, CheckerRun, Capture, ScoreEvent,
+    Round, CheckerRun, Capture, ScoreEvent, CheckerJob,
 )
 from .mutation import mutation_transaction
 from .services import open_registration, start_competition, finish_competition
@@ -137,7 +137,9 @@ class TeamAdmin(SerializedAdmin):
 
 @admin.register(Service)
 class ServiceAdmin(SerializedAdmin):
-    pass
+    def get_readonly_fields(self, request, obj=None):
+        # Runtime changes cannot silently repurpose existing deployed services.
+        return ("runtime",) if obj and obj.team_services.exists() else ()
 
 
 class MembershipAdminForm(forms.ModelForm):
@@ -188,6 +190,13 @@ class OrganizerHistoryAdmin(ReadOnlyAdmin):
 @admin.register(Round)
 class RoundAdmin(OrganizerHistoryAdmin):
     list_display = ("competition", "number", "state", "started_at", "expires_at", "finished_at", "checker_backend")
+
+
+@admin.register(CheckerJob)
+class CheckerJobAdmin(OrganizerHistoryAdmin):
+    list_display = ("id", "operation", "state", "attempts", "deadline", "result", "error_code")
+    fields = ("id", "flag", "operation", "state", "attempts", "deadline", "started_at", "finished_at", "result", "error_code")
+    list_filter = ("state", "operation", "result")
 
 
 @admin.register(CheckerRun)

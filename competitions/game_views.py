@@ -49,11 +49,11 @@ def game_open_round(request, competition_id):
             number = int(request.POST.get("number", ""))
         except (ValueError, TypeError):
             raise ValidationError("Неверный номер раунда.") from None
-        open_round(competition, request.user, number=number)
+        result = open_round(competition, request.user, number=number, backend=request.POST.get("backend", "mock"))
     except ValidationError as error:
         messages.error(request, " ".join(error.messages))
     else:
-        messages.success(request, "Открыт mock-раунд на 5 минут.")
+        messages.success(request, "Открыт раунд на 5 минут." if result.checker_backend == "mock" else "HTTP-раунд открыт. Задания установки ожидают worker.")
     return redirect("game_detail", competition_id=competition.pk)
 
 
@@ -62,11 +62,11 @@ def game_open_round(request, competition_id):
 def game_finish_round(request, competition_id, round_id):
     game_round = get_object_or_404(Round, pk=round_id, competition_id=competition_id)
     try:
-        finish_round(game_round, request.user)
+        result = finish_round(game_round, request.user)
     except ValidationError as error:
         messages.error(request, " ".join(error.messages))
     else:
-        messages.success(request, "Раунд завершён, результаты checker и очки сохранены.")
+        messages.success(request, "Раунд завершён, результаты checker и очки сохранены." if result.state == "finished" else "Приём атак закрыт. Итоговые проверки ожидают worker.")
     return redirect("game_detail", competition_id=competition_id)
 
 
